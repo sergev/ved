@@ -13285,7 +13285,7 @@ impl Editor {
 
     pub fn move_page_up(
         &mut self,
-        action: &MovePageUp,
+        _action: &MovePageUp,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -13314,30 +13314,38 @@ impl Editor {
 
         self.hide_mouse_cursor(HideMouseCursorOrigin::MovementAction, cx);
 
-        let effects = if action.center_cursor {
-            SelectionEffects::scroll(Autoscroll::center())
-        } else {
-            SelectionEffects::default()
-        };
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+        let scroll_position = self.scroll_position(cx);
+        let scroll_top = scroll_position.y;
+        let row_count_f64 = row_count as f64;
+        let new_scroll_top = (scroll_top - row_count_f64).max(0.);
+        let max_row = display_map.max_point().row().as_f64();
 
-        let text_layout_details = &self.text_layout_details(window);
-
-        self.change_selections(effects, window, cx, |s| {
+        self.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.move_with(|map, selection| {
                 if !selection.is_empty() {
                     selection.goal = SelectionGoal::None;
                 }
-                let (cursor, goal) = movement::up_by_rows(
-                    map,
-                    selection.end,
-                    row_count,
-                    selection.goal,
-                    false,
-                    text_layout_details,
-                );
-                selection.collapse_to(cursor, goal);
+
+                let cursor_display_point = selection.end;
+                let cursor_row = cursor_display_point.row().as_f64();
+                let cursor_column = cursor_display_point.column();
+
+                let relative_position = cursor_row - scroll_top;
+                let new_cursor_row = new_scroll_top + relative_position;
+
+                let new_cursor_row_clamped = new_cursor_row.max(0.).min(max_row);
+                let new_cursor_display_row = DisplayRow(new_cursor_row_clamped as u32);
+
+                let new_cursor_display_point = DisplayPoint::new(new_cursor_display_row, cursor_column);
+                let clipped_point = map.clip_point(new_cursor_display_point, Bias::Left);
+
+                selection.collapse_to(clipped_point, SelectionGoal::None);
             });
         });
+
+        let new_scroll_position = gpui::Point::new(scroll_position.x, new_scroll_top);
+        self.set_scroll_position(new_scroll_position, window, cx);
     }
 
     pub fn select_up(&mut self, _: &SelectUp, window: &mut Window, cx: &mut Context<Self>) {
@@ -13409,7 +13417,7 @@ impl Editor {
 
     pub fn move_page_down(
         &mut self,
-        action: &MovePageDown,
+        _action: &MovePageDown,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -13438,29 +13446,45 @@ impl Editor {
 
         self.hide_mouse_cursor(HideMouseCursorOrigin::MovementAction, cx);
 
-        let effects = if action.center_cursor {
-            SelectionEffects::scroll(Autoscroll::center())
-        } else {
-            SelectionEffects::default()
-        };
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+        let scroll_position = self.scroll_position(cx);
+        let scroll_top = scroll_position.y;
+        let row_count_f64 = row_count as f64;
+        let max_row = display_map.max_point().row().as_f64();
 
-        let text_layout_details = &self.text_layout_details(window);
-        self.change_selections(effects, window, cx, |s| {
+        if let Some(visible_line_count) = self.visible_line_count() {
+            if scroll_top + visible_line_count >= max_row {
+                return;
+            }
+        }
+
+        let new_scroll_top = scroll_top + row_count_f64;
+
+        self.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.move_with(|map, selection| {
                 if !selection.is_empty() {
                     selection.goal = SelectionGoal::None;
                 }
-                let (cursor, goal) = movement::down_by_rows(
-                    map,
-                    selection.end,
-                    row_count,
-                    selection.goal,
-                    false,
-                    text_layout_details,
-                );
-                selection.collapse_to(cursor, goal);
+
+                let cursor_display_point = selection.end;
+                let cursor_row = cursor_display_point.row().as_f64();
+                let cursor_column = cursor_display_point.column();
+
+                let relative_position = cursor_row - scroll_top;
+                let new_cursor_row = new_scroll_top + relative_position;
+
+                let new_cursor_row_clamped = new_cursor_row.max(0.).min(max_row);
+                let new_cursor_display_row = DisplayRow(new_cursor_row_clamped as u32);
+
+                let new_cursor_display_point = DisplayPoint::new(new_cursor_display_row, cursor_column);
+                let clipped_point = map.clip_point(new_cursor_display_point, Bias::Left);
+
+                selection.collapse_to(clipped_point, SelectionGoal::None);
             });
         });
+
+        let new_scroll_position = gpui::Point::new(scroll_position.x, new_scroll_top);
+        self.set_scroll_position(new_scroll_position, window, cx);
     }
 
     pub fn select_down(&mut self, _: &SelectDown, window: &mut Window, cx: &mut Context<Self>) {
